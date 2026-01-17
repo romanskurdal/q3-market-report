@@ -74,7 +74,7 @@ export async function getDbConnection(): Promise<sql.ConnectionPool> {
       const errorMessage1 = error1 instanceof Error ? error1.message : 'Unknown error'
       
       // Try method 2: Config object with username only (if we added @servername)
-      if (config.user.includes('@') && !originalUser.includes('@')) {
+      if (config.user && config.user.includes('@') && !originalUser.includes('@')) {
         try {
           const fallbackConfig = { ...config, user: originalUser }
           pool = await sql.connect(fallbackConfig)
@@ -88,8 +88,9 @@ export async function getDbConnection(): Promise<sql.ConnectionPool> {
           } catch (error3) {
             // Try method 4: Connection string with username only
             try {
+              const currentUser = config.user || connectionString.match(/User Id=([^;]+);/)?.[1] || originalUser
               const userOnlyString = connectionString.replace(
-                `User Id=${config.user};`,
+                `User Id=${currentUser};`,
                 `User Id=${originalUser};`
               )
               pool = await sql.connect(userOnlyString)

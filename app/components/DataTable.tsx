@@ -131,23 +131,26 @@ export default function DataTable({ data, columns, onDownloadCSV, title }: DataT
                 }}>
                   {row.date ? new Date(row.date as string).toLocaleDateString() : ''}
                 </td>
-                {columns.map((col) => (
-                  <td
-                    key={col.code}
-                    style={{
-                      padding: '10px 16px',
-                      textAlign: 'right',
-                      fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-                      color: '#1e293b'
-                    }}
-                  >
-                    {row[col.code] !== null && row[col.code] !== undefined
-                      ? typeof row[col.code] === 'number'
-                        ? row[col.code].toFixed(2)
-                        : row[col.code]
-                      : 'N/A'}
-                  </td>
-                ))}
+                {columns.map((col) => {
+                  const cellValue = row[col.code]
+                  return (
+                    <td
+                      key={col.code}
+                      style={{
+                        padding: '10px 16px',
+                        textAlign: 'right',
+                        fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+                        color: '#1e293b'
+                      }}
+                    >
+                      {cellValue !== null && cellValue !== undefined
+                        ? typeof cellValue === 'number'
+                          ? cellValue.toFixed(2)
+                          : cellValue
+                        : 'N/A'}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>

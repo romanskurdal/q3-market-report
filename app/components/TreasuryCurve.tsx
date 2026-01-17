@@ -20,6 +20,10 @@ interface TreasuryPoint {
   value: number | null
 }
 
+interface TreasuryPointWithOrder extends TreasuryPoint {
+  order: number
+}
+
 export default function TreasuryCurve() {
   const [curveData, setCurveData] = useState<TreasuryPoint[]>([])
   const [loading, setLoading] = useState(false)
@@ -57,7 +61,7 @@ export default function TreasuryCurve() {
           '30Y': 6
         }
         
-        const points: TreasuryPoint[] = []
+        const points: TreasuryPointWithOrder[] = []
         
         TREASURY_SERIES.forEach(code => {
           const seriesData = data.chartData?.[code] || []
@@ -103,8 +107,8 @@ export default function TreasuryCurve() {
         console.log('Treasury Curve - All points before sorting:', points)
         
         // Sort by maturity order and remove the order property
-        const sortedPoints = points
-          .sort((a, b) => (a as any).order - (b as any).order)
+        const sortedPoints: TreasuryPoint[] = points
+          .sort((a, b) => a.order - b.order)
           .map(({ order, ...point }) => point)
         
         console.log('Treasury Curve - Final sorted points:', sortedPoints)
