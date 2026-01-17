@@ -39,17 +39,33 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    // Load section config
+    // Load section config with timeout
     const loadConfig = async () => {
       setLoadingConfig(true)
       try {
-        const response = await fetch('/api/admin/section-config')
+        // Add timeout to prevent hanging indefinitely
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+        
+        const response = await fetch('/api/admin/section-config', {
+          signal: controller.signal
+        })
+        
+        clearTimeout(timeoutId)
+        
         if (response.ok) {
           const data = await response.json()
           setSectionConfig(data.config || sectionConfig)
+        } else {
+          // If API fails, use default config (silently)
         }
       } catch (error) {
-        console.error('Error loading config:', error)
+        // If fetch fails or times out, use default config
+        // Only log non-abort errors (abort = timeout, which is expected)
+        if (error instanceof Error && error.name !== 'AbortError') {
+          console.error('Error loading config:', error)
+        }
+        // Keep using the default sectionConfig that's already set in useState
       } finally {
         setLoadingConfig(false)
       }
