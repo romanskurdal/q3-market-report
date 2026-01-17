@@ -88,6 +88,7 @@ export async function getDbConnection(): Promise<sql.ConnectionPool> {
           } catch (error3) {
             // Try method 4: Connection string with username only
             try {
+              const connectionString = buildConnectionString()
               const currentUser = config.user || connectionString.match(/User Id=([^;]+);/)?.[1] || originalUser
               const userOnlyString = connectionString.replace(
                 `User Id=${currentUser};`,
