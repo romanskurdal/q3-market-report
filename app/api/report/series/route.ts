@@ -46,11 +46,12 @@ export async function GET(request: Request) {
 
     // Build parameterized query to fetch series data with descriptions
     // Join FinData with FinMaster to get descriptions
-    // Limit to 500 rows per series to avoid huge queries
+    // Note: we intentionally do NOT limit rows here so we can always
+    // compute the true latest value per series from the full date range.
     const codeParams = codes.map((code, index) => `@code${index}`).join(',')
     
     let query = `
-      SELECT TOP 2000
+      SELECT
         fd.DATE as date,
         fd.API_CODE as code,
         fd.VALUE as value,

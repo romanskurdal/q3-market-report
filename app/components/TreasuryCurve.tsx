@@ -15,28 +15,129 @@ const TREASURY_LABELS: Record<string, string> = {
   'DGS30': '30Y'
 }
 
-interface TreasuryPoint {
+interface CurveChartPoint {
   maturity: string
-  value: number | null
-}
-
-interface TreasuryPointWithOrder extends TreasuryPoint {
-  order: number
+  curve1: number | null
+  curve2: number | null
 }
 
 export default function TreasuryCurve() {
-  const [curveData, setCurveData] = useState<TreasuryPoint[]>([])
+  // Full time series per code (from FinData.DATE and VALUE)
+  const [seriesData, setSeriesData] = useState<
+    Record<string, Array<{ date: string; value: number | null }>>
+  >({})
+  // Available dates where we have at least one data point
+  const [availableDates, setAvailableDates] = useState<string[]>([])
+  // Selected dates for the yield curve (primary and optional comparison)
+  const [selectedDate1, setSelectedDate1] = useState<string>('')
+  const [selectedDate2, setSelectedDate2] = useState<string>('')
+  // Data formatted for the chart (one point per maturity, with up to two curves)
+  const [chartData, setChartData] = useState<CurveChartPoint[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetchCurve = async () => {
+    const CACHE_KEY = 'treasury_curve_data'
+    const PROCESSED_CACHE_KEY = 'treasury_curve_processed'
+    const CACHE_EXPIRY_MS = 60 * 60 * 1000 // 1 hour cache
+
+    const fetchCurve = async (forceRefresh = false) => {
+      // Check processed cache first (much faster - already processed data)
+      if (!forceRefresh) {
+        try {
+          const processedCache = localStorage.getItem(PROCESSED_CACHE_KEY)
+          if (processedCache) {
+            const { seriesData: cachedSeriesData, availableDates: cachedDates, timestamp } = JSON.parse(processedCache)
+            const age = Date.now() - timestamp
+            
+            if (age < CACHE_EXPIRY_MS && cachedSeriesData && cachedDates) {
+              // Use processed cached data - instant load!
+              console.log('Treasury Curve - Using processed cached data')
+              setSeriesData(cachedSeriesData)
+              setAvailableDates(cachedDates)
+              
+              if (cachedDates.length > 0) {
+                setSelectedDate1(prev => prev || cachedDates[0])
+              }
+              return // Exit early, using processed cache
+            }
+          }
+        } catch (e) {
+          console.warn('Treasury Curve - Processed cache read failed:', e)
+        }
+      }
+
+      // Check raw cache second
+      if (!forceRefresh) {
+        try {
+          const cached = localStorage.getItem(CACHE_KEY)
+          if (cached) {
+            const { data, timestamp } = JSON.parse(cached)
+            const age = Date.now() - timestamp
+            
+            if (age < CACHE_EXPIRY_MS) {
+              // Process cached raw data (faster than fetching)
+              console.log('Treasury Curve - Processing cached raw data')
+              const newSeriesData: Record<string, Array<{ date: string; value: number | null }>> = {}
+              const dateSet = new Set<string>()
+
+              TREASURY_SERIES.forEach(code => {
+                const seriesData = data.chartData?.[code] || []
+                newSeriesData[code] = (seriesData || []).map((d: { date: string; value: number | null }) => {
+                  const isoDate = d.date
+                  if (isoDate) {
+                    dateSet.add(isoDate)
+                  }
+                  return { date: isoDate, value: d.value !== null ? Number(d.value) : null }
+                })
+              })
+
+              const dates = Array.from(dateSet).sort(
+                (a, b) => new Date(b).getTime() - new Date(a).getTime()
+              )
+
+              // Cache the processed data for even faster future loads
+              try {
+                localStorage.setItem(PROCESSED_CACHE_KEY, JSON.stringify({
+                  seriesData: newSeriesData,
+                  availableDates: dates,
+                  timestamp: Date.now()
+                }))
+              } catch (e) {
+                console.warn('Treasury Curve - Processed cache write failed:', e)
+              }
+
+              setSeriesData(newSeriesData)
+              setAvailableDates(dates)
+
+              if (dates.length > 0) {
+                setSelectedDate1(prev => prev || dates[0])
+              }
+              return // Exit early, using cache
+            } else {
+              console.log('Treasury Curve - Cache expired, fetching fresh data')
+            }
+          }
+        } catch (e) {
+          console.warn('Treasury Curve - Cache read failed:', e)
+        }
+      }
+
+      // Fetch fresh data (limited date range for performance)
       setLoading(true)
       setError(null)
       try {
-        // Get latest values for treasury series
+        // Get last 30 years of data for treasury series
         const codes = TREASURY_SERIES.join(',')
-        const response = await fetch(`/api/report/series?codes=${codes}&startDate=1900-01-01&endDate=2099-12-31`)
+        const today = new Date()
+        const endDateStr = today.toISOString().split('T')[0]
+        const thirtyYearsAgo = new Date(today)
+        thirtyYearsAgo.setFullYear(today.getFullYear() - 30)
+        const startDateStr = thirtyYearsAgo.toISOString().split('T')[0]
+
+        const response = await fetch(
+          `/api/report/series?codes=${codes}&startDate=${startDateStr}&endDate=${endDateStr}`
+        )
         
         if (!response.ok) {
           throw new Error('Failed to fetch treasury data')
@@ -44,86 +145,104 @@ export default function TreasuryCurve() {
         
         const data = await response.json()
         
-        // Debug: log what we received
-        console.log('Treasury Curve - Data received:', {
-          chartDataKeys: Object.keys(data.chartData || {}),
-          descriptions: data.descriptions
-        })
-        
-        // Extract the latest value for each series and sort by maturity order
-        const maturityOrder: Record<string, number> = {
-          '1Y': 0,
-          '2Y': 1,
-          '5Y': 2,
-          '7Y': 3,
-          '10Y': 4,
-          '20Y': 5,
-          '30Y': 6
-        }
-        
-        const points: TreasuryPointWithOrder[] = []
-        
+        // Store raw series data keyed by code
+        const newSeriesData: Record<string, Array<{ date: string; value: number | null }>> = {}
+        const dateSet = new Set<string>()
+
         TREASURY_SERIES.forEach(code => {
           const seriesData = data.chartData?.[code] || []
           
-          console.log(`Treasury Curve - ${code}:`, {
-            hasData: seriesData.length > 0,
-            dataLength: seriesData.length,
-            firstFew: seriesData.slice(0, 3)
-          })
-          
-          if (seriesData.length > 0) {
-            // Get the most recent non-null value
-            const validData = seriesData.filter((d: { value: number | null }) => 
-              d.value !== null && d.value !== undefined && !isNaN(Number(d.value))
-            )
-            
-            if (validData.length > 0) {
-              const latestValue = validData
-                .sort((a: { date: string }, b: { date: string }) => 
-                  new Date(b.date).getTime() - new Date(a.date).getTime()
-                )[0]?.value
-              
-              if (latestValue !== null && latestValue !== undefined) {
-                const label = TREASURY_LABELS[code] || code
-                const order = maturityOrder[label] ?? 999
-                
-                // Add each maturity point (no duplicates)
-                if (!points.find(p => p.maturity === label)) {
-                  points.push({
-                    maturity: label,
-                    value: Number(latestValue),
-                    order
-                  })
-                  console.log(`Treasury Curve - Added ${label}: ${latestValue}`)
-                }
-              }
+          newSeriesData[code] = (seriesData || []).map((d: { date: string; value: number | null }) => {
+            // Ensure we use the DATE column from FinData, passed through the API
+            const isoDate = d.date
+            if (isoDate) {
+              dateSet.add(isoDate)
             }
-          } else {
-            console.warn(`Treasury Curve - No data found for ${code}`)
-          }
+            return { date: isoDate, value: d.value !== null ? Number(d.value) : null }
+          })
         })
         
-        console.log('Treasury Curve - All points before sorting:', points)
-        
-        // Sort by maturity order and remove the order property
-        const sortedPoints: TreasuryPoint[] = points
-          .sort((a, b) => a.order - b.order)
-          .map(({ order, ...point }) => point)
-        
-        console.log('Treasury Curve - Final sorted points:', sortedPoints)
-        
-        setCurveData(sortedPoints)
+        // Build sorted list of available dates (most recent first)
+        const dates = Array.from(dateSet).sort(
+          (a, b) => new Date(b).getTime() - new Date(a).getTime()
+        )
+
+        // Cache both raw and processed data
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify({
+            data,
+            timestamp: Date.now()
+          }))
+          localStorage.setItem(PROCESSED_CACHE_KEY, JSON.stringify({
+            seriesData: newSeriesData,
+            availableDates: dates,
+            timestamp: Date.now()
+          }))
+          console.log('Treasury Curve - Data cached (raw and processed)')
+        } catch (e) {
+          console.warn('Treasury Curve - Cache write failed:', e)
+        }
+
+        setSeriesData(newSeriesData)
+        setAvailableDates(dates)
+
+        // Default selection: most recent date as primary, no comparison initially
+        if (dates.length > 0) {
+          setSelectedDate1(prev => prev || dates[0])
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error')
-        setCurveData([])
+        setSeriesData({})
+        setAvailableDates([])
+        setChartData([])
       } finally {
         setLoading(false)
       }
     }
 
     fetchCurve()
+
+    // Listen for refresh events
+    const handleRefresh = () => {
+      fetchCurve(true) // Force refresh
+    }
+    
+    window.addEventListener('dataRefresh', handleRefresh)
+    
+    return () => {
+      window.removeEventListener('dataRefresh', handleRefresh)
+    }
   }, [])
+
+  // Recompute chart data whenever selected dates or series data change
+  useEffect(() => {
+    if (!selectedDate1 || Object.keys(seriesData).length === 0) {
+      setChartData([])
+      return
+    }
+
+    const buildValueForDate = (code: string, date: string): number | null => {
+      const series = seriesData[code] || []
+      const match = series.find(p => p.date === date)
+      return match && match.value !== null && !isNaN(Number(match.value))
+        ? Number(match.value)
+        : null
+    }
+
+    const points: CurveChartPoint[] = TREASURY_SERIES.map(code => {
+      const label = TREASURY_LABELS[code]
+      const value1 = buildValueForDate(code, selectedDate1)
+      const value2 = selectedDate2 ? buildValueForDate(code, selectedDate2) : null
+
+      return {
+        maturity: label,
+        curve1: value1,
+        curve2: value2,
+      }
+    })
+
+    setChartData(points)
+  }, [selectedDate1, selectedDate2, seriesData])
 
   if (loading) {
     return (
@@ -143,7 +262,7 @@ export default function TreasuryCurve() {
     )
   }
 
-  if (curveData.length === 0) {
+  if (chartData.length === 0) {
     return (
       <div style={{ border: '1px solid #ddd', borderRadius: '4px', padding: '15px', background: 'white', marginBottom: '20px' }}>
         <h3 style={{ fontSize: '16px', marginBottom: '10px', fontWeight: '500' }}>Treasury Yield Curve</h3>
@@ -165,15 +284,78 @@ export default function TreasuryCurve() {
     }}>
       <h3 style={{
         fontSize: '18px',
-        marginBottom: '16px',
+        marginBottom: '12px',
         fontWeight: '600',
         color: '#1e293b'
       }}>
         Treasury Yield Curve
       </h3>
+
+      {/* Yield curve date selectors */}
+      <div style={{ marginBottom: '12px', display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
+        <span style={{ fontSize: '12px', fontWeight: 500, color: '#64748b' }}>Yield Curve Dates:</span>
+        <label style={{ fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          Primary:{' '}
+          <input
+            type="date"
+            value={selectedDate1}
+            onChange={(e) => {
+              const date = e.target.value
+              // Check if date exists in available dates, or find closest
+              if (availableDates.includes(date)) {
+                setSelectedDate1(date)
+              } else {
+                // Find closest available date
+                const closest = availableDates.find(d => d <= date) || availableDates[availableDates.length - 1]
+                if (closest) setSelectedDate1(closest)
+              }
+            }}
+            min={availableDates.length > 0 ? availableDates[availableDates.length - 1] : undefined}
+            max={availableDates.length > 0 ? availableDates[0] : undefined}
+            style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'inherit' }}
+          />
+          {selectedDate1 && !availableDates.includes(selectedDate1) && (
+            <span style={{ fontSize: '10px', color: '#f59e0b' }}>(closest: {new Date(availableDates.find(d => d <= selectedDate1) || availableDates[0] || '').toLocaleDateString()})</span>
+          )}
+        </label>
+        <label style={{ fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          Compare:{' '}
+          <input
+            type="date"
+            value={selectedDate2}
+            onChange={(e) => {
+              const date = e.target.value
+              if (!date) {
+                setSelectedDate2('')
+              } else if (availableDates.includes(date)) {
+                setSelectedDate2(date)
+              } else {
+                // Find closest available date
+                const closest = availableDates.find(d => d <= date) || availableDates[availableDates.length - 1]
+                if (closest) setSelectedDate2(closest)
+              }
+            }}
+            min={availableDates.length > 0 ? availableDates[availableDates.length - 1] : undefined}
+            max={availableDates.length > 0 ? availableDates[0] : undefined}
+            style={{ fontSize: '12px', padding: '4px 8px', borderRadius: '4px', border: '1px solid #cbd5e1', fontFamily: 'inherit' }}
+          />
+          {selectedDate2 && !availableDates.includes(selectedDate2) && (
+            <span style={{ fontSize: '10px', color: '#f59e0b' }}>(closest: {new Date(availableDates.find(d => d <= selectedDate2) || availableDates[0] || '').toLocaleDateString()})</span>
+          )}
+          {selectedDate2 && (
+            <button
+              onClick={() => setSelectedDate2('')}
+              style={{ fontSize: '10px', padding: '2px 6px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+            >
+              Clear
+            </button>
+          )}
+        </label>
+      </div>
+
       <ResponsiveContainer width="100%" height={280}>
         <LineChart 
-          data={curveData}
+          data={chartData}
           margin={{ top: 5, right: 10, left: 0, bottom: 5 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -207,29 +389,70 @@ export default function TreasuryCurve() {
               return `${Number(value).toFixed(2)}%`
             }}
           />
-          <Line 
-            type="monotone" 
-            dataKey="value" 
-            stroke="#00bcd4" 
-            strokeWidth={3}
-            dot={{ r: 6, fill: '#00bcd4', strokeWidth: 2, stroke: '#fff' }}
-            activeDot={{ r: 8, fill: '#00acc1' }}
-            connectNulls={false}
-            isAnimationActive={true}
-          />
+          {selectedDate1 && (
+            <Line 
+              type="monotone" 
+              dataKey="curve1" 
+              name={new Date(selectedDate1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              stroke="#00bcd4" 
+              strokeWidth={3}
+              dot={{ r: 6, fill: '#00bcd4', strokeWidth: 2, stroke: '#fff' }}
+              activeDot={{ r: 8, fill: '#00acc1' }}
+              connectNulls={false}
+              isAnimationActive={true}
+            />
+          )}
+          {selectedDate2 && (
+            <Line 
+              type="monotone" 
+              dataKey="curve2" 
+              name={new Date(selectedDate2).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              stroke="#f97316" 
+              strokeWidth={2}
+              dot={{ r: 5, fill: '#f97316', strokeWidth: 2, stroke: '#fff' }}
+              activeDot={{ r: 7, fill: '#ea580c' }}
+              connectNulls={false}
+              isAnimationActive={true}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
       <div style={{ marginTop: '12px', padding: '8px 12px', background: '#f8fafc', borderRadius: '6px' }}>
-        <p style={{ fontSize: '12px', color: '#64748b', margin: 0, fontWeight: '500' }}>
-          Latest available yields: {curveData.length > 0 
-            ? curveData.map(p => `${p.maturity} ${p.value?.toFixed(2)}%`).join(' • ')
-            : 'No data available'}
+        <p style={{ fontSize: '12px', color: '#64748b', margin: 0, fontWeight: '500', marginBottom: '4px' }}>
+          Yields for selected dates:
         </p>
-        {curveData.length < TREASURY_SERIES.length && (
-          <p style={{ fontSize: '11px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-            Note: {TREASURY_SERIES.length - curveData.length} series not available in database
-          </p>
-        )}
+        <div style={{ fontSize: '11px', color: '#475569', lineHeight: '1.6' }}>
+          {TREASURY_SERIES.map(code => {
+            const label = TREASURY_LABELS[code]
+            const point = chartData.find(p => p.maturity === label)
+
+            const parts: string[] = []
+            if (selectedDate1) {
+              if (point && point.curve1 !== null) {
+                parts.push(
+                  `${point.curve1.toFixed(2)}% @ ${new Date(selectedDate1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                )
+              } else {
+                parts.push(`N/A @ ${new Date(selectedDate1).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`)
+              }
+            }
+            if (selectedDate2) {
+              if (point && point.curve2 !== null) {
+                parts.push(
+                  `${point.curve2.toFixed(2)}% @ ${new Date(selectedDate2).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                )
+              } else {
+                parts.push(`N/A @ ${new Date(selectedDate2).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`)
+              }
+            }
+
+            return (
+              <div key={label} style={{ marginBottom: '2px' }}>
+                <strong>{label}</strong>: {parts.join('  |  ') || 'N/A'}
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
