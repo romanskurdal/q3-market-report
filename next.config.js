@@ -1,9 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Production optimizations - only use standalone for production builds
-  // standalone mode is used automatically by Vercel and other platforms
-  // Remove this if you need standalone for a custom server deployment
-  // output: 'standalone', // Only enable for custom server deployments
+  // Production optimizations - standalone mode for Azure App Service
+  output: 'standalone', // Required for Azure App Service deployment
   // If deploying to a subdirectory, uncomment and set basePath:
   // basePath: '/market-analysis',
   // assetPrefix: '/market-analysis',
