@@ -29,33 +29,57 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
+      - name: Debug build output structure
+        run: |
+          echo "=== .next/standalone contents (including hidden) ==="
+          ls -la .next/standalone/
+          echo ""
+          echo "=== .next/standalone/.next exists? ==="
+          ls -la .next/standalone/.next/ 2>/dev/null || echo ".next/standalone/.next does NOT exist"
+          echo ""
+          echo "=== Root .next contents ==="
+          ls -la .next/ | head -15
+
       - name: Prepare deployment package
         run: |
-          # For Next.js standalone mode, deploy the standalone folder structure
+          # For Next.js standalone mode
           mkdir -p deploy
-          # Copy standalone server and minimal node_modules
-          cp -r .next/standalone/* deploy/
-          # Copy the entire .next build output from root (BUILD_ID, server/, cache/, static/)
-          # The standalone folder does NOT contain .next - it stays at the repo root
-          cp -r .next deploy/
-          # Copy public folder if it exists
+          
+          # Copy everything from standalone, including hidden files/dirs
+          cp -r .next/standalone/. deploy/
+          
+          # Copy static assets (standalone doesn't include these)
+          mkdir -p deploy/.next
+          cp -r .next/static deploy/.next/
+          
+          # Copy public folder
           if [ -d "public" ]; then
             cp -r public deploy/
           fi
-          # Copy startup script for Azure App Service
+          
+          # Copy startup script
           if [ -f "startup.sh" ]; then
             cp startup.sh deploy/
             chmod +x deploy/startup.sh
           fi
-          # Copy .deployment so Azure skips Oryx build (use our pre-built standalone as-is)
+          
+          # Copy .deployment to skip Oryx
           if [ -f ".deployment" ]; then
             cp .deployment deploy/
           fi
-          # Verify deployment package size
-          echo "Deployment package contents:"
+          
+          # Verify the critical files exist
+          echo "=== Deploy package structure ==="
+          ls -la deploy/
+          echo ""
+          echo "=== deploy/.next contents ==="
+          ls -la deploy/.next/ 2>/dev/null || echo "deploy/.next does NOT exist!"
+          echo ""
+          echo "=== Checking for BUILD_ID ==="
+          cat deploy/.next/BUILD_ID 2>/dev/null || echo "BUILD_ID not found!"
+          echo ""
+          echo "=== Package size ==="
           du -sh deploy
-          echo "Deployment package structure:"
-          ls -la deploy/ | head -20
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
