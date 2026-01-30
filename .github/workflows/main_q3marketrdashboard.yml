@@ -29,11 +29,37 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
+      - name: Prepare deployment package
+        run: |
+          # For Next.js standalone mode, deploy the standalone folder structure
+          mkdir -p deploy
+          # Copy the entire standalone output (includes server.js and minimal node_modules)
+          cp -r .next/standalone/* deploy/
+          # Copy static assets to the correct location
+          if [ -d ".next/static" ]; then
+            mkdir -p deploy/.next
+            cp -r .next/static deploy/.next/
+          fi
+          # Copy public folder if it exists
+          if [ -d "public" ]; then
+            cp -r public deploy/
+          fi
+          # Copy startup script for Azure App Service
+          if [ -f "startup.sh" ]; then
+            cp startup.sh deploy/
+            chmod +x deploy/startup.sh
+          fi
+          # Verify deployment package size
+          echo "Deployment package contents:"
+          du -sh deploy
+          echo "Deployment package structure:"
+          ls -la deploy/ | head -20
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: deploy
 
   deploy:
     runs-on: ubuntu-latest
@@ -47,6 +73,18 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: node-app
+          path: .
+      
+      - name: Verify deployment package
+        run: |
+          echo "Deployment package contents:"
+          ls -la | head -20
+          echo "Package size:"
+          du -sh .
+          echo "Checking for server.js:"
+          ls -la server.js || echo "server.js not found"
+          echo "Checking for startup.sh:"
+          ls -la startup.sh || echo "startup.sh not found"
       
       - name: Login to Azure
         uses: azure/login@v2
