@@ -33,15 +33,11 @@ jobs:
         run: |
           # For Next.js standalone mode, deploy the standalone folder structure
           mkdir -p deploy
-          # Copy the entire standalone output (* does not include hidden dirs like .next)
+          # Copy standalone server and minimal node_modules
           cp -r .next/standalone/* deploy/
-          # Copy hidden .next from standalone (BUILD_ID, server/, cache/) - required for production start
-          cp -r .next/standalone/.next deploy/
-          # Copy static assets into .next (standalone does not include static in .next)
-          if [ -d ".next/static" ]; then
-            mkdir -p deploy/.next
-            cp -r .next/static deploy/.next/
-          fi
+          # Copy the entire .next build output from root (BUILD_ID, server/, cache/, static/)
+          # The standalone folder does NOT contain .next - it stays at the repo root
+          cp -r .next deploy/
           # Copy public folder if it exists
           if [ -d "public" ]; then
             cp -r public deploy/
