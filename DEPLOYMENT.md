@@ -48,34 +48,31 @@ Vercel will automatically build and deploy your app. You'll get a URL like: `htt
 
 Add a link in your WordPress site to the new subdomain, or create a page that redirects to it.
 
-## Alternative: Deploy to Azure App Service
+## Alternative: Deploy to Azure App Service (Linux)
 
-If you prefer to host on Azure (since you're already using Azure SQL):
+The app uses Next.js **standalone** output. CI/CD builds in GitHub Actions and deploys a pre-built package (no Oryx build on the server).
 
-### Step 1: Build the App
+### Required: App Service configuration
 
-```bash
-npm run build
-```
+1. **Startup command** (Configuration → General settings):
+   ```bash
+   bash startup.sh
+   ```
 
-### Step 2: Create Azure App Service
-
-1. Go to Azure Portal
-2. Create a new "Web App" (Node.js runtime)
-3. Configure environment variables in App Settings:
-   - `DB_SERVER`
+2. **Application settings** (Configuration → Application settings):
+   - `DB_SERVER` (e.g. `yourserver.database.windows.net`)
    - `DB_DATABASE`
    - `DB_USER`
    - `DB_PASSWORD`
-   - `ADMIN_MODE`
+   - `ADMIN_MODE` (optional)
 
-### Step 3: Deploy
+3. **Optional – if Oryx still runs and overwrites the deployment**, add:
+   - `SCM_DO_BUILD_DURING_DEPLOYMENT` = `false`
+   - (Node.js only) `ENABLE_ORYX_BUILD` = `false`
 
-You can deploy using:
-- Azure CLI
-- GitHub Actions (CI/CD)
-- VS Code Azure extension
-- FTP/SFTP
+### Deploy via GitHub Actions
+
+Push to `main`; the workflow builds the standalone output and zip-deploys it. Avoid changing App Service settings (e.g. startup command) in the Portal immediately before or after a deploy to prevent "SCM container restart" conflicts.
 
 ### Step 4: Configure Custom Domain
 

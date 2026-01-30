@@ -49,6 +49,10 @@ jobs:
             cp startup.sh deploy/
             chmod +x deploy/startup.sh
           fi
+          # Copy .deployment so Azure skips Oryx build (use our pre-built standalone as-is)
+          if [ -f ".deployment" ]; then
+            cp .deployment deploy/
+          fi
           # Verify deployment package size
           echo "Deployment package contents:"
           du -sh deploy
@@ -85,7 +89,13 @@ jobs:
           ls -la server.js || echo "server.js not found"
           echo "Checking for startup.sh:"
           ls -la startup.sh || echo "startup.sh not found"
-      
+          echo "Checking for .deployment:"
+          ls -la .deployment || echo ".deployment not found"
+
+      # Avoid "SCM container restart" conflict: wait for site to be idle before zip deploy
+      - name: Wait before deploy
+        run: sleep 90
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
